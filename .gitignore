@@ -1,0 +1,10 @@
+/bin/
+/commhub
+commhub.yaml
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+
+# Vendored modules can ship fixture databases; do not strip them from vendor.
+!vendor/**/*.db

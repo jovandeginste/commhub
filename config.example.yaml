@@ -1,0 +1,23 @@
+# Runtime configuration. Copy to ./commhub.yaml or
+# $XDG_CONFIG_HOME/commhub/commhub.yaml (default ~/.config/commhub/commhub.yaml),
+# or point --config at a file. Every key can also be set with COMMHUB_<KEY>,
+# e.g. COMMHUB_API_TOKENS=token1,token2. For the systemd user service, put
+# secrets in ~/.config/commhub/commhub.env instead.
+
+database: commhub.db
+listen: 127.0.0.1:8080
+
+# Comma-separated bearer tokens. Leave empty to disable authentication.
+api_tokens: ""
+
+# REST client used by `commhub query` and `commhub get`. An empty api_url is
+# derived from listen; an empty api_token falls back to the first api_tokens
+# entry.
+api_url: ""
+api_token: ""
+
+# NDJSON chunk size for the streaming endpoint and the CLI.
+batch_size: 500
+
+# debug, info, warn, error
+log_level: info

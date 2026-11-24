@@ -1,0 +1,32 @@
+[Unit]
+Description=CommHub communication hub
+Documentation=https://github.com/jovandeginste/commhub/blob/main/docs/design.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h
+ExecStart=%h/.local/bin/commhub serve
+
+# The unit owns the database location. It is created on first start (mode 0700).
+Environment=COMMHUB_DATABASE=%h/.local/share/commhub/commhub.db
+Environment=COMMHUB_LISTEN=127.0.0.1:8080
+
+# Optional secrets (API tokens), e.g.:
+#   mkdir -p ~/.config/commhub
+#   printf 'COMMHUB_API_TOKENS=%s\n' "$(openssl rand -hex 32)" \
+#     > ~/.config/commhub/commhub.env
+#   chmod 600 ~/.config/commhub/commhub.env
+EnvironmentFile=-%h/.config/commhub/commhub.env
+
+Restart=on-failure
+RestartSec=3s
+UMask=0077
+
+# Available to unprivileged user services. ProtectSystem/ProtectHome are not
+# usable here (they need privileged mount namespaces).
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target

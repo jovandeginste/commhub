@@ -1,0 +1,229 @@
+# Project lint configuration. Based on the global config, with the v2.15 names
+# of the disabled struct/whitespace linters (exhaustruct_v5, wsl_v5).
+version: "2"
+run:
+  timeout: 3m
+  modules-download-mode: vendor
+  issues-exit-code: 1
+  tests: true
+  relative-path-mode: wd
+  allow-parallel-runners: true
+output:
+  formats:
+    text:
+      path: stdout
+      print-linter-name: true
+      print-issued-lines: true
+  show-stats: false
+linters:
+  default: all
+  disable:
+    - asasalint
+    - canonicalheader
+    - cyclop
+    - decorder
+    - depguard
+    - dupword
+    - err113
+    - errorlint
+    - exhaustruct
+    - exhaustruct_v5
+    - forbidigo
+    - funcorder
+    - ginkgolinter
+    - gochecknoglobals
+    - gochecksumtype
+    - godot
+    - godox
+    - goheader
+    - gomoddirectives
+    - gosmopolitan
+    - grouper
+    - iface
+    - importas
+    - interfacebloat
+    - ireturn
+    - lll
+    - loggercheck
+    - maintidx
+    - makezero
+    - mnd
+    - musttag
+    - nlreturn
+    - noctx
+    - paralleltest
+    - perfsprint
+    - prealloc
+    - promlinter
+    - reassign
+    - recvcheck
+    - sloglint
+    - tagalign
+    - tagliatelle
+    - testableexamples
+    - testifylint
+    - testpackage
+    - thelper
+    - tparallel
+    - varnamelen
+    - wrapcheck
+    - zerologlint
+    - noinlineerr
+    - arangolint
+    - embeddedstructfieldcheck
+    - wsl
+    - wsl_v5
+    - iotamixing
+    - godoclint
+    - unqueryvet
+  settings:
+    dupl:
+      threshold: 100
+    errcheck:
+      check-type-assertions: false
+      check-blank: true
+    funlen:
+      lines: 60
+      statements: 40
+    gocognit:
+      min-complexity: 20
+    goconst:
+      min-len: 3
+      min-occurrences: 3
+    gocritic:
+      disable-all: true
+      enabled-checks:
+        - appendAssign
+        - appendCombine
+        - argOrder
+        - assignOp
+        - badCall
+        - badCond
+        - badLock
+        - boolExprSimplify
+        - builtinShadow
+        - captLocal
+        - caseOrder
+        - defaultCaseOrder
+        - dupArg
+        - dupBranchBody
+        - dupCase
+        - dupSubExpr
+        - dynamicFmtString
+        - elseif
+        - emptyFallthrough
+        - emptyStringTest
+        - exitAfterDefer
+        - externalErrorReassign
+        - flagDeref
+        - flagName
+        - hexLiteral
+        - ifElseChain
+        - importShadow
+        - indexAlloc
+        - mapKey
+        - methodExprCall
+        - nestingReduce
+        - newDeref
+        - nilValReturn
+        - offBy1
+        - paramTypeCombine
+        - ptrToRefParam
+        - regexpMust
+        - singleCaseSwitch
+        - sloppyLen
+        - stringXbytes
+        - switchTrue
+        - syncMapLoadAndDelete
+        - timeExprSimplify
+        - typeAssertChain
+        - typeSwitchVar
+        - typeUnparen
+        - uncheckedInlineErr
+        - underef
+        - unlambda
+        - unnecessaryBlock
+        - unslice
+        - valSwap
+        - weakCond
+        - wrapperFunc
+        - yodaStyleExpr
+    gocyclo:
+      min-complexity: 20
+    gosec:
+      excludes:
+        - G115
+    lll:
+      line-length: 120
+      tab-width: 1
+    nakedret:
+      max-func-lines: 30
+    nolintlint:
+      require-explanation: false
+      require-specific: false
+      allow-unused: false
+    revive:
+      rules:
+        - name: unused-parameter
+          disabled: true
+    staticcheck:
+      checks:
+        - all
+        - "-QF1008"
+    unparam:
+      check-exported: false
+    wsl:
+      strict-append: true
+      allow-assign-and-call: true
+      allow-multiline-assign: true
+      force-case-trailing-whitespace: 0
+      allow-trailing-comment: false
+      allow-separated-leading-comment: false
+      allow-cuddle-declarations: false
+      force-err-cuddling: true
+    wsl_v5:
+      allow-first-in-block: true
+      allow-whole-block: true
+      branch-max-lines: 4
+      case-max-lines: 0
+      default: all
+      disable:
+        - assign-exclusive
+        - assign-expr
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - linters:
+          - dupl
+          - errcheck
+          - funlen
+          - goconst
+          - gocyclo
+          - gosec
+        path: '(.+)_test\.go'
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+issues:
+  max-same-issues: 0
+  new: false
+formatters:
+  enable:
+    - gofmt
+    - gofumpt
+    - goimports
+  settings:
+    gofmt:
+      simplify: true
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
