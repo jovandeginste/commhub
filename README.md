@@ -37,6 +37,36 @@ Read messages:
 
 ```sh
 curl -s 'localhost:8080/api/v1/messages?source=mattermost&unread=true&limit=20'
+./bin/commhub stats
+```
+
+Remove a message that should never have been ingested (hard delete):
+
+```sh
+curl -s -X DELETE localhost:8080/api/v1/messages/0192...
+```
+
+A connector can instead flag a message that disappeared on the source by
+sending it again with `"deleted_in_source_at": "2026-11-24T10:00:00Z"`. The row
+stays and keeps its local state (read, tags, sphere).
+
+Attachments can be stored in the hub, content-addressed by SHA-256, and
+downloaded again:
+
+```sh
+curl -T photo.jpg localhost:8080/api/v1/attachments/$SHA
+curl -o photo.jpg localhost:8080/api/v1/attachments/$SHA
+```
+
+A message whose attachment carries that SHA-256 now points at the local blob;
+`GET /api/v1/messages/{id}` returns `/api/v1/attachments/<sha256>` as its URL.
+
+Connectors can keep their sync position in the hub instead of a local file:
+
+```sh
+curl -s -X PUT localhost:8080/api/v1/cursors/teams%3Awork \
+  -H 'Content-Type: application/json' -d '{"value":"1795518166729"}'
+curl -s localhost:8080/api/v1/cursors/teams%3Awork
 ```
 
 Batch or NDJSON ingestion, the entity API and the query parameters are
@@ -52,11 +82,12 @@ documented in [docs/design.md](docs/design.md).
 ./bin/commhub query --tag urgent --tag-mode all --json
 ./bin/commhub query --param has_attachments=false --param language=en
 ./bin/commhub get 0192...
+./bin/commhub stats
 ```
 
 The API URL defaults to the configured `listen` address (wildcard binds become
-`127.0.0.1`); the token defaults to `api_token`, or the first `api_tokens`
-entry. Override them with `--url` / `--token` or `COMMHUB_API_URL` /
+`127.0.0.1`, a unix socket becomes `unix:<path>`); the token defaults to
+`api_token`, or the first `api_tokens` entry. Override them with `--url` / `--token` or `COMMHUB_API_URL` /
 `COMMHUB_API_TOKEN`.
 
 `--json` prints the raw API response for scripting. When another page is
@@ -128,9 +159,14 @@ platform ── connector ──POST /api/v1/messages──▶ CommHub ──RES
 | `api_token` | `COMMHUB_API_TOKEN` | first `api_tokens` entry |
 | `batch_size` | `COMMHUB_BATCH_SIZE` | `500` |
 | `log_level` | `COMMHUB_LOG_LEVEL` | `info` |
+| `attachments_dir` | `COMMHUB_ATTACHMENTS_DIR` | next to the database |
 
-`api_tokens` is a comma-separated list of bearer tokens. `api_url` and
-`api_token` are used by the `query` and `get` CLI commands.
+`listen` accepts `host:port` or `unix:/path/to/commhub.sock`; a unix socket is
+created with mode `0600`, so only your user can reach it. `api_tokens` is a
+comma-separated list of bearer tokens; prefix one with `read:` or `write:` to
+limit it (e.g. `read:abc,write:def`), a bare token allows both; the CLI commands
+need a token with read scope. `api_url` and `api_token` are used by the `query`,
+`get` and `stats` CLI commands.
 
 ## Development
 
@@ -145,10 +181,11 @@ Layout:
 ```
 cmd/commhub/     CLI entrypoint: serve, migrate, ingest, query, get, version
 pkg/api/         HTTP API (echo v5)
-pkg/client/      HTTP client used by query/get
+pkg/blobs/       content-addressed attachment store
+pkg/client/      HTTP client used by query/get/stats
 pkg/ingest/      idempotent write path
 pkg/model/       GORM models, enums, migrations
-pkg/store/       SQLite connection, migrations, seed data
+pkg/store/       SQLite connections (writer + reader pool), migrations, seed
 pkg/config/      viper configuration
 contrib/systemd/ user unit and secret environment example
 docs/design.md   data model, API contract, design decisions

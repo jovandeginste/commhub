@@ -42,12 +42,7 @@ func runIngest(cmd *cobra.Command, path, configPath string, batchSize int) error
 		return err
 	}
 
-	sqlDB, err := db.DB()
-	if err != nil {
-		return err
-	}
-
-	defer func() { _ = sqlDB.Close() }()
+	defer closeDatabase(db)
 
 	reader := io.Reader(os.Stdin)
 
@@ -67,8 +62,12 @@ func runIngest(cmd *cobra.Command, path, configPath string, batchSize int) error
 		size = cfg.BatchSize
 	}
 
-	result, err := ingest.New(db, logger).
-		IngestStream(context.Background(), reader, size)
+	ingester := ingest.New(db, logger)
+	if store := blobStore(cfg); store != nil {
+		ingester.SetBlobs(store)
+	}
+
+	result, err := ingester.IngestStream(context.Background(), reader, size)
 	if result != nil {
 		fmt.Fprintf(cmd.OutOrStdout(),
 			"total=%d created=%d updated=%d unchanged=%d failed=%d\n",

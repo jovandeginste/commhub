@@ -19,7 +19,7 @@ import (
 func (s *Server) listSources(c *echo.Context) error {
 	var sources []model.Source
 
-	if err := s.db.WithContext(c.Request().Context()).
+	if err := s.reader.WithContext(c.Request().Context()).
 		Preload("Accounts").
 		Order("slug ASC").
 		Find(&sources).Error; err != nil {
@@ -34,21 +34,21 @@ func (s *Server) listSources(c *echo.Context) error {
 }
 
 func (s *Server) listChannels(c *echo.Context) error {
-	q := s.db.WithContext(c.Request().Context()).Model(&model.Channel{})
+	q := s.reader.WithContext(c.Request().Context()).Model(&model.Channel{})
 
 	if source := strings.TrimSpace(c.QueryParam("source")); source != "" {
 		q = q.Where("source_id IN (?)",
-			s.db.Model(&model.Source{}).Select("id").Where("slug = ?", source))
+			s.reader.Model(&model.Source{}).Select("id").Where("slug = ?", source))
 	}
 
 	if account := strings.TrimSpace(c.QueryParam("account")); account != "" {
 		q = q.Where("account_id IN (?)",
-			s.db.Model(&model.Account{}).Select("id").Where("slug = ?", account))
+			s.reader.Model(&model.Account{}).Select("id").Where("slug = ?", account))
 	}
 
 	if sphere := strings.TrimSpace(c.QueryParam("sphere")); sphere != "" {
 		q = q.Where("sphere_id IN (?)",
-			s.db.Model(&model.Sphere{}).Select("id").Where("slug = ?", sphere))
+			s.reader.Model(&model.Sphere{}).Select("id").Where("slug = ?", sphere))
 	}
 
 	limit, err := queryLimit(c.QueryParam("limit"), 500, 2000)
@@ -70,7 +70,7 @@ func (s *Server) listChannels(c *echo.Context) error {
 }
 
 func (s *Server) listCorrespondents(c *echo.Context) error {
-	q := s.db.WithContext(c.Request().Context()).Model(&model.Correspondent{})
+	q := s.reader.WithContext(c.Request().Context()).Model(&model.Correspondent{})
 
 	if search := strings.TrimSpace(c.QueryParam("q")); search != "" {
 		q = q.Where("display_name LIKE ?", "%"+search+"%")
@@ -78,7 +78,7 @@ func (s *Server) listCorrespondents(c *echo.Context) error {
 
 	if sphere := strings.TrimSpace(c.QueryParam("sphere")); sphere != "" {
 		q = q.Where("sphere_id IN (?)",
-			s.db.Model(&model.Sphere{}).Select("id").Where("slug = ?", sphere))
+			s.reader.Model(&model.Sphere{}).Select("id").Where("slug = ?", sphere))
 	}
 
 	limit, err := queryLimit(c.QueryParam("limit"), 500, 2000)
@@ -252,7 +252,7 @@ func (s *Server) addCorrespondentIdentity(c *echo.Context) error {
 func (s *Server) listSpheres(c *echo.Context) error {
 	var spheres []model.Sphere
 
-	if err := s.db.WithContext(c.Request().Context()).
+	if err := s.reader.WithContext(c.Request().Context()).
 		Order("sort_order ASC, name ASC").Find(&spheres).Error; err != nil {
 		return err
 	}
@@ -308,7 +308,7 @@ func (s *Server) createSphere(c *echo.Context) error {
 func (s *Server) listTags(c *echo.Context) error {
 	var tags []model.Tag
 
-	if err := s.db.WithContext(c.Request().Context()).
+	if err := s.reader.WithContext(c.Request().Context()).
 		Order("slug ASC").Find(&tags).Error; err != nil {
 		return err
 	}
@@ -418,7 +418,7 @@ func (s *Server) stats(c *echo.Context) error {
 		return err
 	}
 
-	if err := s.db.WithContext(ctx).Table("messages").
+	if err := s.reader.WithContext(ctx).Table("messages").
 		Select("sources.slug AS source, COUNT(*) AS messages").
 		Joins("JOIN sources ON sources.id = messages.source_id").
 		Group("sources.slug").
@@ -453,26 +453,26 @@ func (s *Server) statCounts(ctx context.Context, response *statsResponse) error 
 	}
 
 	for _, entry := range models {
-		if err := s.db.WithContext(ctx).Model(entry.model).Count(entry.dest).Error; err != nil {
+		if err := s.reader.WithContext(ctx).Model(entry.model).Count(entry.dest).Error; err != nil {
 			return err
 		}
 	}
 
-	return s.db.WithContext(ctx).Model(&model.Message{}).
+	return s.reader.WithContext(ctx).Model(&model.Message{}).
 		Where("is_read = ?", false).Count(&response.Unread).Error
 }
 
 func (s *Server) messageTimeSpan(ctx context.Context) (*time.Time, *time.Time, error) {
 	var earliest model.Message
 
-	if err := s.db.WithContext(ctx).Select("sent_at").
+	if err := s.reader.WithContext(ctx).Select("sent_at").
 		Order("sent_at ASC").Limit(1).Find(&earliest).Error; err != nil {
 		return nil, nil, err
 	}
 
 	var latest model.Message
 
-	if err := s.db.WithContext(ctx).Select("sent_at").
+	if err := s.reader.WithContext(ctx).Select("sent_at").
 		Order("sent_at DESC").Limit(1).Find(&latest).Error; err != nil {
 		return nil, nil, err
 	}

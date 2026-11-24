@@ -98,6 +98,10 @@ type MessageInput struct {
 	ReceivedAt *time.Time `json:"received_at,omitempty"`
 	EditedAt   *time.Time `json:"edited_at,omitempty"`
 
+	// DeletedInSourceAt marks a message that was removed on the source. The
+	// hub keeps the row (and its local state) but flags it.
+	DeletedInSourceAt *time.Time `json:"deleted_in_source_at,omitempty"`
+
 	Importance  int               `json:"importance,omitempty"`
 	Sphere      string            `json:"sphere,omitempty"`
 	Tags        []string          `json:"tags,omitempty"`
@@ -131,6 +135,24 @@ func (in *MessageInput) Validate() error {
 
 	in.Sphere = Slugify(in.Sphere)
 	in.Channel.Sphere = Slugify(in.Channel.Sphere)
+
+	// Truncate timestamps to whole seconds before they reach the database or
+	// the content hash: connectors that send milliseconds one day and seconds
+	// the next must not turn every replay into an update.
+	if in.SentAt != nil {
+		truncated := in.SentAt.UTC().Truncate(time.Second)
+		in.SentAt = &truncated
+	}
+
+	if in.ReceivedAt != nil {
+		truncated := in.ReceivedAt.UTC().Truncate(time.Second)
+		in.ReceivedAt = &truncated
+	}
+
+	if in.DeletedInSourceAt != nil {
+		truncated := in.DeletedInSourceAt.UTC().Truncate(time.Second)
+		in.DeletedInSourceAt = &truncated
+	}
 
 	return nil
 }

@@ -169,7 +169,30 @@ func (s *Server) getMessage(c *echo.Context) error {
 		return err
 	}
 
+	s.decorateAttachments(&message)
+
 	return c.JSON(http.StatusOK, message)
+}
+
+// deleteMessage removes a message that should never have been ingested. It is a
+// hard delete: recipients, attachments and tag links go with it (the schema
+// cascades). Use the deleted_in_source_at ingest field to flag a message that
+// still exists on the source.
+func (s *Server) deleteMessage(c *echo.Context) error {
+	var message model.Message
+
+	ctx := c.Request().Context()
+
+	if err := s.db.WithContext(ctx).Select("id").
+		Where("id = ?", c.Param("id")).First(&message).Error; err != nil {
+		return err
+	}
+
+	if err := s.db.WithContext(ctx).Delete(&model.Message{}, "id = ?", message.ID).Error; err != nil {
+		return err
+	}
+
+	return c.NoContent(http.StatusNoContent)
 }
 
 type patchMessageRequest struct {
@@ -194,31 +217,9 @@ func (s *Server) patchMessage(c *echo.Context) error {
 		return err
 	}
 
-	updates := map[string]any{}
-
-	if request.IsRead != nil {
-		updates["is_read"] = *request.IsRead
-	}
-
-	if request.IsStarred != nil {
-		updates["is_starred"] = *request.IsStarred
-	}
-
-	if request.IsArchived != nil {
-		updates["is_archived"] = *request.IsArchived
-	}
-
-	if request.Sphere != nil {
-		sphereID, err := s.sphereID(c, *request.Sphere)
-		if err != nil {
-			return err
-		}
-
-		if sphereID == nil {
-			updates["sphere_id"] = nil
-		} else {
-			updates["sphere_id"] = *sphereID
-		}
+	updates, err := s.patchUpdates(c, request)
+	if err != nil {
+		return err
 	}
 
 	if len(updates) > 0 {
@@ -240,7 +241,41 @@ func (s *Server) patchMessage(c *echo.Context) error {
 		return err
 	}
 
+	s.decorateAttachments(&message)
+
 	return c.JSON(http.StatusOK, message)
+}
+
+// patchUpdates turns a PATCH body into a column map.
+func (s *Server) patchUpdates(c *echo.Context, request patchMessageRequest) (map[string]any, error) {
+	updates := map[string]any{}
+
+	if request.IsRead != nil {
+		updates["is_read"] = *request.IsRead
+	}
+
+	if request.IsStarred != nil {
+		updates["is_starred"] = *request.IsStarred
+	}
+
+	if request.IsArchived != nil {
+		updates["is_archived"] = *request.IsArchived
+	}
+
+	if request.Sphere != nil {
+		sphereID, err := s.sphereID(c, *request.Sphere)
+		if err != nil {
+			return nil, err
+		}
+
+		if sphereID == nil {
+			updates["sphere_id"] = nil
+		} else {
+			updates["sphere_id"] = *sphereID
+		}
+	}
+
+	return updates, nil
 }
 
 // sphereID resolves a sphere slug. An empty slug means "clear the sphere" and
@@ -272,7 +307,7 @@ func (s *Server) findSphereID(ctx context.Context, slug string) (*string, error)
 }
 
 func (s *Server) messageQuery(c *echo.Context) *gorm.DB {
-	return s.db.WithContext(c.Request().Context()).
+	return s.reader.WithContext(c.Request().Context()).
 		Preload("Source").
 		Preload("Account").
 		Preload("Channel").
@@ -283,6 +318,22 @@ func (s *Server) messageQuery(c *echo.Context) *gorm.DB {
 		Preload("Tags")
 }
 
+// decorateAttachments points attachments that live in the hub's blob store at
+// the download endpoint, so clients do not have to know the local path.
+func (s *Server) decorateAttachments(message *model.Message) {
+	if s.blobs == nil {
+		return
+	}
+
+	for i := range message.Attachments {
+		attachment := &message.Attachments[i]
+
+		if attachment.URL == "" && attachment.SHA256 != "" && s.blobs.Exists(attachment.SHA256) {
+			attachment.URL = "/api/v1/attachments/" + attachment.SHA256
+		}
+	}
+}
+
 func (s *Server) listBatches(c *echo.Context) error {
 	limit, err := queryLimit(c.QueryParam("limit"), 20, 200)
 	if err != nil {
@@ -291,7 +342,7 @@ func (s *Server) listBatches(c *echo.Context) error {
 
 	var batches []model.IngestBatch
 
-	if err := s.db.WithContext(c.Request().Context()).
+	if err := s.reader.WithContext(c.Request().Context()).
 		Preload("Errors").
 		Order("started_at DESC").
 		Limit(limit).

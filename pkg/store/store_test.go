@@ -36,3 +36,26 @@ func TestOpenCreatesDatabaseDirectory(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, model.Migrate(db2))
 }
+
+func TestOpenWithReader(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	path := filepath.Join(t.TempDir(), "commhub.db")
+
+	writer, reader, err := store.OpenWithReader(path, logger)
+	require.NoError(t, err)
+	require.NotSame(t, writer, reader)
+
+	require.NoError(t, model.Migrate(writer))
+
+	// The reader sees what the writer committed.
+	require.NoError(t, writer.Create(&model.Tag{Slug: "urgent", Name: "urgent"}).Error)
+
+	var tag model.Tag
+	require.NoError(t, reader.Where("slug = ?", "urgent").First(&tag).Error)
+	assert.Equal(t, "urgent", tag.Name)
+
+	// The read pool refuses writes, so a read handler can never take the write
+	// lock by accident.
+	err = reader.Create(&model.Tag{Slug: "nope", Name: "nope"}).Error
+	require.Error(t, err)
+}

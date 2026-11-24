@@ -16,6 +16,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	"github.com/jovandeginste/commhub/pkg/blobs"
 	"github.com/jovandeginste/commhub/pkg/model"
 )
 
@@ -24,6 +25,7 @@ type Service struct {
 	db     *gorm.DB
 	logger *slog.Logger
 	now    func() time.Time
+	blobs  *blobs.Store
 }
 
 // New returns an ingestion service.
@@ -33,6 +35,13 @@ func New(db *gorm.DB, logger *slog.Logger) *Service {
 		logger: logger,
 		now:    func() time.Time { return time.Now().UTC() },
 	}
+}
+
+// SetBlobs attaches an attachment store. When a connector uploads a blob before
+// ingesting the message, the hub links the local copy instead of the
+// connector's path.
+func (s *Service) SetBlobs(store *blobs.Store) {
+	s.blobs = store
 }
 
 // Result is the outcome for a single message.
@@ -364,9 +373,24 @@ func (s *Service) ingest(tx *gorm.DB, in *MessageInput) (Result, error) {
 
 	switch {
 	case errors.Is(err, gorm.ErrRecordNotFound):
+		if in.DeletedInSourceAt != nil {
+			// The connector reports a deletion before we ever saw the message.
+			// Nothing to flag; the next sync will not bring it back either.
+			return Result{Status: model.ResultUnchanged}, nil
+		}
+
 		return s.createMessage(tx, in, resolved)
 	case err != nil:
 		return Result{}, fmt.Errorf("lookup message: %w", err)
+	}
+
+	if in.DeletedInSourceAt != nil {
+		if err := tx.Model(&existing).
+			Update("deleted_at", in.DeletedInSourceAt.UTC()).Error; err != nil {
+			return Result{}, fmt.Errorf("mark message deleted: %w", err)
+		}
+
+		return Result{ID: existing.ID, Status: model.ResultUpdated}, nil
 	}
 
 	if existing.ContentHash == resolved.hash {
@@ -489,30 +513,32 @@ func (s *Service) createMessage(tx *gorm.DB, in *MessageInput, resolved *message
 	}
 
 	message := model.Message{
-		SourceID:    resolved.source.ID,
-		AccountID:   resolved.account.ID,
-		ChannelID:   resolved.channel.ID,
-		ExternalID:  in.ExternalID,
-		ThreadID:    in.ThreadID,
-		ParentID:    resolveParent(tx, resolved.account.ID, in.ParentExternalID),
-		SenderID:    senderID,
-		Direction:   string(direction),
-		Kind:        kind,
-		Subject:     in.Subject,
-		Body:        in.Body,
-		BodyFormat:  in.BodyFormat,
-		Preview:     in.Preview,
-		Language:    in.Language,
-		URL:         in.URL,
-		SentAt:      resolved.sentAt,
-		ReceivedAt:  utcPtr(in.ReceivedAt),
-		IngestedAt:  s.now(),
-		EditedAt:    utcPtr(in.EditedAt),
-		ContentHash: resolved.hash,
-		Importance:  in.Importance,
-		SphereID:    resolved.sphereID,
-		Metadata:    model.JSON(in.Metadata),
-		Raw:         model.JSON(in.Raw),
+		SourceID:   resolved.source.ID,
+		AccountID:  resolved.account.ID,
+		ChannelID:  resolved.channel.ID,
+		ExternalID: in.ExternalID,
+		ThreadID:   in.ThreadID,
+		ParentID:   resolveParent(tx, resolved.account.ID, in.ParentExternalID),
+		SenderID:   senderID,
+		Direction:  string(direction),
+		Kind:       kind,
+		Subject:    in.Subject,
+		Body:       in.Body,
+		BodyFormat: in.BodyFormat,
+		Preview:    in.Preview,
+		Language:   in.Language,
+		URL:        in.URL,
+		SentAt:     resolved.sentAt,
+		ReceivedAt: utcPtr(in.ReceivedAt),
+		IngestedAt: s.now(),
+		EditedAt:   utcPtr(in.EditedAt),
+
+		DeletedInSourceAt: utcPtr(in.DeletedInSourceAt),
+		ContentHash:       resolved.hash,
+		Importance:        in.Importance,
+		SphereID:          resolved.sphereID,
+		Metadata:          model.JSON(in.Metadata),
+		Raw:               model.JSON(in.Raw),
 	}
 
 	if err := tx.Omit(clause.Associations).Create(&message).Error; err != nil {
@@ -819,7 +845,7 @@ func (s *Service) syncRelated(tx *gorm.DB, message *model.Message, in *MessageIn
 	}
 
 	if in.Attachments != nil {
-		if err := syncAttachments(tx, message.ID, in.Attachments); err != nil {
+		if err := s.syncAttachments(tx, message.ID, in.Attachments); err != nil {
 			return err
 		}
 	}
@@ -857,7 +883,7 @@ func syncRecipients(tx *gorm.DB, messageID string, recipients []resolvedRecipien
 	return nil
 }
 
-func syncAttachments(tx *gorm.DB, messageID string, attachments []AttachmentInput) error {
+func (s *Service) syncAttachments(tx *gorm.DB, messageID string, attachments []AttachmentInput) error {
 	if err := tx.Where("message_id = ?", messageID).Delete(&model.Attachment{}).Error; err != nil {
 		return fmt.Errorf("clear attachments: %w", err)
 	}
@@ -865,6 +891,12 @@ func syncAttachments(tx *gorm.DB, messageID string, attachments []AttachmentInpu
 	rows := make([]model.Attachment, 0, len(attachments))
 
 	for _, attachment := range attachments {
+		storagePath := attachment.StoragePath
+
+		if path, ok := s.blobPath(attachment.SHA256); ok {
+			storagePath = path
+		}
+
 		rows = append(rows, model.Attachment{
 			MessageID:   messageID,
 			ExternalID:  attachment.ExternalID,
@@ -872,7 +904,7 @@ func syncAttachments(tx *gorm.DB, messageID string, attachments []AttachmentInpu
 			MimeType:    attachment.MimeType,
 			Size:        attachment.Size,
 			SHA256:      attachment.SHA256,
-			StoragePath: attachment.StoragePath,
+			StoragePath: storagePath,
 			URL:         attachment.URL,
 			Metadata:    model.JSON(attachment.Metadata),
 		})
@@ -885,6 +917,21 @@ func syncAttachments(tx *gorm.DB, messageID string, attachments []AttachmentInpu
 	}
 
 	return nil
+}
+
+// blobPath returns the local blob path for a checksum, when it was uploaded to
+// this hub.
+func (s *Service) blobPath(checksum string) (string, bool) {
+	if s.blobs == nil || !s.blobs.Exists(checksum) {
+		return "", false
+	}
+
+	path, err := s.blobs.Path(checksum)
+	if err != nil {
+		return "", false
+	}
+
+	return path, true
 }
 
 func syncTags(tx *gorm.DB, messageID string, names []string) error {

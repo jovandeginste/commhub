@@ -5,14 +5,21 @@
 # secrets in ~/.config/commhub/commhub.env instead.
 
 database: commhub.db
+
+# host:port, or unix:/path/to/commhub.sock for a user-only socket.
 listen: 127.0.0.1:8080
 
-# Comma-separated bearer tokens. Leave empty to disable authentication.
+# Comma-separated bearer tokens. Leave empty to disable authentication. Prefix
+# a token with read: or write: to limit what it may do.
 api_tokens: ""
 
-# REST client used by `commhub query` and `commhub get`. An empty api_url is
-# derived from listen; an empty api_token falls back to the first api_tokens
-# entry.
+# Uploaded attachment blobs. Empty means an "attachments" directory next to the
+# database.
+attachments_dir: ""
+
+# REST client used by `commhub query`, `commhub get` and `commhub stats`. An
+# empty api_url is derived from listen; an empty api_token falls back to the
+# first api_tokens entry.
 api_url: ""
 api_token: ""
 

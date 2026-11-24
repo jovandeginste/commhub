@@ -23,12 +23,7 @@ func newMigrateCmd(configPath *string) *cobra.Command {
 				return err
 			}
 
-			sqlDB, err := db.DB()
-			if err != nil {
-				return err
-			}
-
-			defer func() { _ = sqlDB.Close() }()
+			defer closeDatabase(db)
 
 			logger.Info("database is up to date", "database", cfg.Database)
 

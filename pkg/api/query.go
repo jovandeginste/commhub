@@ -111,7 +111,7 @@ func (s *Server) filteredMessages(c *echo.Context) (*gorm.DB, messageSort, error
 		return nil, messageSort{}, err
 	}
 
-	q := s.db.WithContext(c.Request().Context()).Model(&model.Message{})
+	q := s.reader.WithContext(c.Request().Context()).Model(&model.Message{})
 
 	q, err = s.applyEntityFilters(query, q)
 	if err != nil {
@@ -163,7 +163,7 @@ func (s *Server) applySourceAccountFilters(query url.Values, q *gorm.DB) *gorm.D
 
 	if kind := strings.ToLower(textParam(query, "source_kind")); kind != "" {
 		q = q.Where("source_id IN (?)",
-			s.db.Model(&model.Source{}).Select("id").Where("kind = ?", kind))
+			s.reader.Model(&model.Source{}).Select("id").Where("kind = ?", kind))
 	}
 
 	if id := textParam(query, "account_id"); id != "" {
@@ -171,7 +171,7 @@ func (s *Server) applySourceAccountFilters(query url.Values, q *gorm.DB) *gorm.D
 	}
 
 	if account := ingest.Slugify(textParam(query, "account")); account != "" {
-		accountIDs := s.db.Model(&model.Account{}).Select("id").Where("slug = ?", account)
+		accountIDs := s.reader.Model(&model.Account{}).Select("id").Where("slug = ?", account)
 		if source != "" {
 			accountIDs = accountIDs.Where("source_id IN (?)", s.sourceIDs(source))
 		}
@@ -183,7 +183,7 @@ func (s *Server) applySourceAccountFilters(query url.Values, q *gorm.DB) *gorm.D
 }
 
 func (s *Server) sourceIDs(slug string) *gorm.DB {
-	return s.db.Model(&model.Source{}).Select("id").Where("slug = ?", slug)
+	return s.reader.Model(&model.Source{}).Select("id").Where("slug = ?", slug)
 }
 
 func (s *Server) applyChannelFilters(query url.Values, q *gorm.DB) *gorm.DB {
@@ -191,7 +191,7 @@ func (s *Server) applyChannelFilters(query url.Values, q *gorm.DB) *gorm.DB {
 		q = q.Where("channel_id = ?", id)
 	}
 
-	channelIDs := s.db.Model(&model.Channel{}).Select("id")
+	channelIDs := s.reader.Model(&model.Channel{}).Select("id")
 	filtered := false
 
 	if externalID := firstTextParam(query, "channel", "channel_external_id"); externalID != "" {
@@ -222,11 +222,11 @@ func (s *Server) applyIdentityFilters(query url.Values, q *gorm.DB) *gorm.DB {
 	}
 
 	if value := textParam(query, "sender"); value != "" {
-		q = q.Where("sender_id IN (?)", identityIDs(s.db, textParam(query, "sender_kind"), value))
+		q = q.Where("sender_id IN (?)", identityIDs(s.reader, textParam(query, "sender_kind"), value))
 	}
 
 	if correspondent := textParam(query, "sender_correspondent"); correspondent != "" {
-		q = q.Where("sender_id IN (?)", correspondentIdentityIDs(s.db, correspondent))
+		q = q.Where("sender_id IN (?)", correspondentIdentityIDs(s.reader, correspondent))
 	}
 
 	q = s.applyRecipientFilters(query, q)
@@ -260,7 +260,7 @@ func (s *Server) applyRecipientFilters(query url.Values, q *gorm.DB) *gorm.DB {
 		return q
 	}
 
-	identitySubquery := identityIDs(s.db, textParam(query, "recipient_kind"), value)
+	identitySubquery := identityIDs(s.reader, textParam(query, "recipient_kind"), value)
 
 	if role := strings.ToLower(textParam(query, "recipient_role")); role != "" {
 		return q.Where(`id IN (
@@ -276,7 +276,7 @@ func (s *Server) applyRecipientFilters(query url.Values, q *gorm.DB) *gorm.DB {
 func (s *Server) applySphereFilters(query url.Values, q *gorm.DB) *gorm.DB {
 	if slug := ingest.Slugify(textParam(query, "sphere")); slug != "" {
 		q = q.Where("sphere_id IN (?)",
-			s.db.Model(&model.Sphere{}).Select("id").Where("slug = ?", slug))
+			s.reader.Model(&model.Sphere{}).Select("id").Where("slug = ?", slug))
 	}
 
 	if id := textParam(query, "sphere_id"); id != "" {

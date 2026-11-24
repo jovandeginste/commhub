@@ -34,7 +34,7 @@ func newTestEnv(t *testing.T, tokens []string) *testEnv {
 	require.NoError(t, store.Migrate(db))
 	require.NoError(t, store.Seed(db))
 
-	server := api.New(db, ingest.New(db, logger), api.Config{
+	server := api.New(db, db, ingest.New(db, logger), api.Config{
 		Tokens:    tokens,
 		BatchSize: 10,
 	}, logger)

@@ -22,6 +22,10 @@ type Config struct {
 	BatchSize int    `mapstructure:"batch_size"`
 	LogLevel  string `mapstructure:"log_level"`
 
+	// AttachmentsDir is where uploaded attachment blobs are stored. When empty
+	// it is derived from the database location.
+	AttachmentsDir string `mapstructure:"attachments_dir"`
+
 	// APIURL and APIToken configure the CLI client (query/get). When APIURL is
 	// empty it is derived from Listen.
 	APIURL   string `mapstructure:"api_url"`
@@ -41,6 +45,7 @@ func Load(path string) (*Config, error) {
 	v.SetDefault("api_tokens", "")
 	v.SetDefault("batch_size", 500)
 	v.SetDefault("log_level", "info")
+	v.SetDefault("attachments_dir", "")
 	v.SetDefault("api_url", "")
 	v.SetDefault("api_token", "")
 
@@ -74,30 +79,118 @@ func Load(path string) (*Config, error) {
 	return cfg, nil
 }
 
-// Tokens returns the configured bearer tokens. An empty list disables auth.
-func (c *Config) Tokens() []string {
-	if strings.TrimSpace(c.APITokens) == "" {
-		return nil
+// TokenSpec is one configured API token with the scopes it grants. A bare token
+// grants read and write; "read:<token>" and "write:<token>" restrict it.
+type TokenSpec struct {
+	Value string
+	Read  bool
+	Write bool
+}
+
+// ParseTokenSpec parses one api_tokens entry. Unknown prefixes are treated as
+// part of the token, so existing random tokens keep working.
+func ParseTokenSpec(raw string) TokenSpec {
+	raw = strings.TrimSpace(raw)
+
+	scope, value, ok := strings.Cut(raw, ":")
+	if !ok {
+		return TokenSpec{Value: raw, Read: true, Write: true}
 	}
 
-	tokens := strings.Split(c.APITokens, ",")
-	result := make([]string, 0, len(tokens))
+	switch strings.ToLower(scope) {
+	case "read":
+		return TokenSpec{Value: strings.TrimSpace(value), Read: true}
+	case "write":
+		return TokenSpec{Value: strings.TrimSpace(value), Write: true}
+	case "rw", "all":
+		return TokenSpec{Value: strings.TrimSpace(value), Read: true, Write: true}
+	default:
+		return TokenSpec{Value: raw, Read: true, Write: true}
+	}
+}
 
-	for _, token := range tokens {
-		if token = strings.TrimSpace(token); token != "" {
-			result = append(result, token)
+// SplitTokens splits the comma-separated api_tokens setting.
+func SplitTokens(raw string) []string {
+	parts := strings.Split(raw, ",")
+	tokens := make([]string, 0, len(parts))
+
+	for _, part := range parts {
+		if part = strings.TrimSpace(part); part != "" {
+			tokens = append(tokens, part)
 		}
 	}
 
-	return result
+	return tokens
+}
+
+// TokenSpecs returns the configured tokens with their scopes.
+func (c *Config) TokenSpecs() []TokenSpec {
+	raw := SplitTokens(c.APITokens)
+	specs := make([]TokenSpec, 0, len(raw))
+
+	for _, entry := range raw {
+		if spec := ParseTokenSpec(entry); spec.Value != "" {
+			specs = append(specs, spec)
+		}
+	}
+
+	return specs
+}
+
+// Tokens returns the configured bearer token values, without scope prefixes. An
+// empty list disables auth.
+func (c *Config) Tokens() []string {
+	specs := c.TokenSpecs()
+	tokens := make([]string, 0, len(specs))
+
+	for _, spec := range specs {
+		tokens = append(tokens, spec.Value)
+	}
+
+	return tokens
+}
+
+// BlobDir returns the directory for attachment blobs. It defaults to an
+// "attachments" directory next to the database. In-memory and DSN databases
+// have no location to derive it from; the caller then gets an empty string.
+func (c *Config) BlobDir() string {
+	if dir := strings.TrimSpace(c.AttachmentsDir); dir != "" {
+		return expandHome(dir)
+	}
+
+	if c.Database == ":memory:" || strings.HasPrefix(c.Database, "file:") {
+		return ""
+	}
+
+	return filepath.Join(filepath.Dir(c.Database), "attachments")
+}
+
+// UnixSocketPath reports the socket path when address is a unix listen address.
+// Both "unix:/run/x.sock" and "unix:///run/x.sock" are accepted.
+func UnixSocketPath(address string) (string, bool) {
+	rest, ok := strings.CutPrefix(strings.TrimSpace(address), "unix:")
+	if !ok {
+		return "", false
+	}
+
+	rest = strings.TrimPrefix(rest, "//")
+	if rest == "" {
+		return "", false
+	}
+
+	return rest, true
 }
 
 // APIBaseURL returns the URL the CLI should talk to. An explicit api_url wins;
 // otherwise the listen address is used, with wildcard binds mapped to
-// localhost.
+// localhost. A unix listen address becomes "unix:<path>".
 func (c *Config) APIBaseURL() string {
 	if url := strings.TrimRight(strings.TrimSpace(c.APIURL), "/"); url != "" {
 		return url
+	}
+
+	if path, ok := UnixSocketPath(c.Listen); ok {
+		return "unix:" + path
 	}
 
 	host, port, err := net.SplitHostPort(strings.TrimSpace(c.Listen))
@@ -140,4 +233,14 @@ func (c *Config) Level() slog.Level {
 	default:
 		return slog.LevelInfo
 	}
+}
+
+func expandHome(path string) string {
+	if path == "~" || strings.HasPrefix(path, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, strings.TrimPrefix(path, "~"))
+		}
+	}
+
+	return path
 }

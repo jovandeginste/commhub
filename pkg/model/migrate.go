@@ -18,6 +18,7 @@ func AllModels() []any {
 		&MessageTag{},
 		&IngestBatch{},
 		&IngestError{},
+		&Cursor{},
 	}
 }
 

@@ -92,6 +92,11 @@ erDiagram
     tags ||--o{ message_tags : labels
     messages ||--o{ messages : "replies to"
     ingest_batches ||--o{ ingest_errors : reports
+    cursors {
+        text key PK
+        text value
+        timestamp updated_at
+    }
 ```
 
 ### sources
@@ -193,9 +198,11 @@ Indexes: `(channel_id, sent_at)`, `(source_id, sent_at)`, `sent_at`, `sender_id`
 `thread_id`, `content_hash`, `sphere_id`, `(direction, kind)`, `is_read`.
 
 Soft delete is **not** used: a `gorm.DeletedAt` would make unique keys collide on
-re-ingestion. Instead `deleted_at` is an ordinary nullable column and ingestion
-can resurrect a message. Hub-side deletion (user hides a message) should become a
-separate `hidden_at` column later.
+re-ingestion. Instead `deleted_at` is an ordinary nullable column, set through
+`deleted_in_source_at` when the source removed the message; ingestion can
+resurrect a message later. `DELETE /api/v1/messages/{id}` is a real delete, for
+messages that should never have been ingested. Hub-side deletion (user hides a
+message) should become a separate `hidden_at` column later.
 
 ### attachments
 
@@ -208,8 +215,12 @@ separate `hidden_at` column later.
 | `url` | optional remote URL |
 | `metadata` (JSON) | |
 
-Attachments are replaced as a set on message update. The hub does not store file
-bytes.
+Attachments are replaced as a set on message update. The hub stores uploaded
+bytes itself in `attachments_dir` (`ab/cd/<sha256>`, mode `0600`), content
+addressed so the same file is stored once. When a connector uploads a blob
+before ingesting the message, `storage_path` is rewritten to the hub's copy and
+the read API exposes `/api/v1/attachments/<sha256>` as the URL; a path from the
+connector's machine is kept as-is when no blob was uploaded.
 
 ### tags / message_tags
 
@@ -227,6 +238,14 @@ names; slug is lowercased, trimmed, spaces → `-`.
 `ingest_batches(id, mode, status, total, created, updated, unchanged, failed,
 started_at, finished_at, error)` and `ingest_errors(batch_id, position,
 external_id, error, payload)`. Kept for connector observability; safe to prune.
+
+### cursors
+
+`cursors(key primary key, value, updated_at)`. A connector-owned position marker
+("last synced post id"), so connectors do not need their own state file and can
+move between machines without re-syncing. Keys are opaque strings up to 200
+characters; they travel as one URL path segment, so escape characters like `:`
+as `%3A`.
 
 ## 3. Ingestion
 
@@ -292,7 +311,10 @@ HTTP handler
 ## 4. REST API
 
 Auth: when `api_tokens` is configured, every `/api/v1/*` request needs
-`Authorization: Bearer <token>`. Health endpoints are public.
+`Authorization: Bearer <token>`. A token prefixed with `read:` only gets `GET`,
+`HEAD` and `OPTIONS`; one prefixed with `write:` only gets the other methods; a
+bare token gets both. A valid token without the needed scope gets `403`. Health
+endpoints are public.
 
 ### Ingest
 
@@ -357,9 +379,14 @@ array. Limit 1000. Response:
 the same aggregate result.
 
 Required fields: `source`, `channel.external_id`, `external_id`, `body` (may be
-empty for attachment-only messages). `sent_at` defaults to now; `body_format`
-defaults to `plain`; `kind` defaults to `chat`; `direction` is derived (sender is
-`is_self` → `outbound`, otherwise `inbound`).
+empty for attachment-only messages). `sent_at` defaults to now and is truncated
+to whole seconds; `body_format` defaults to `plain`; `kind` defaults to `chat`;
+`direction` is derived (sender is `is_self` → `outbound`, otherwise `inbound`).
+
+`deleted_in_source_at` turns a payload into a deletion: the existing row is
+flagged, nothing else changes, and a delete for a message the hub never saw is a
+no-op (`unchanged`). Re-ingesting the message with its content leaves the flag
+alone, so a deleted message stays deleted.
 
 ### Read
 
@@ -368,6 +395,13 @@ defaults to `plain`; `kind` defaults to `chat`; `direction` is derived (sender i
 | `GET /api/v1/messages` | cursor-paginated list, newest `sent_at` first |
 | `GET /api/v1/messages/{id}` | one message with channel, sender, recipients, tags, attachments |
 | `PATCH /api/v1/messages/{id}` | local state: `is_read`, `is_starred`, `is_archived`, `sphere`, `tags` |
+| `DELETE /api/v1/messages/{id}` | hard delete a message that should not exist (recipients, attachments and tags cascade) |
+| `PUT /api/v1/attachments/{sha256}` | upload a blob; the body must hash to `sha256` (`201` created, `200` when it already existed) |
+| `GET /api/v1/attachments/{sha256}` | download a blob (content type sniffed, `ETag` is the checksum) |
+| `GET /api/v1/cursors` | list connector cursors |
+| `GET /api/v1/cursors/{key}` | one cursor |
+| `PUT /api/v1/cursors/{key}` | create or replace a cursor (`{"value": "..."}`) |
+| `DELETE /api/v1/cursors/{key}` | remove a cursor |
 | `GET /api/v1/sources` | sources with accounts |
 | `PATCH /api/v1/accounts/{id}` | set `external_user`/kind, name, secret ref, config |
 | `GET /api/v1/channels?source=&account=` | |
@@ -432,7 +466,10 @@ collisions paginate stably.
 
 - Connectors push to a local/private address; bind to `127.0.0.1` by default.
 - Bearer tokens in config/env (`COMMHUB_API_TOKENS`); compare with
-  `subtle.ConstantTimeCompare`.
+  `subtle.ConstantTimeCompare`. Optional `read:`/`write:` scopes limit a token
+  to reads or writes.
+- `listen: unix:/path` creates a mode-`0600` socket, so no port is exposed and
+  no token is needed for local use.
 - Platform credentials live with the connectors. The hub stores only
   `secret_ref` names, which are never serialized.
 - `raw` payloads may contain personal data: DB file permissions + backups are the
@@ -445,5 +482,4 @@ collisions paginate stably.
    `commhub-smartschool`, `commhub-opencode`.
 3. Web UI (templ + Tailwind) and FTS5 search.
 4. Rules engine: auto-tag/sphere based on sender, channel, keywords.
-5. Sync state per account (`last_synced_at`, per-channel cursors) for incremental
-   pulls.
+5. Per-account sync metadata (`last_synced_at`) on top of the generic cursors.

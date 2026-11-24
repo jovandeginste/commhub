@@ -320,3 +320,28 @@ func TestSlugify(t *testing.T) {
 	// stable across runs.
 	assert.Equal(t, ingest.Slugify("School X"), ingest.Slugify("school x"))
 }
+
+func TestIngestTruncatesSentAt(t *testing.T) {
+	service, db := newTestService(t)
+
+	first := baseMessage()
+	sentAt := time.Date(2026, 11, 24, 9, 0, 0, 123456789, time.UTC)
+	first.SentAt = &sentAt
+
+	result, err := service.Ingest(context.Background(), &first)
+	require.NoError(t, err)
+	require.Equal(t, model.ResultCreated, result.Status)
+
+	// The same message with a different sub-second precision is not an update.
+	second := baseMessage()
+	sentAt = time.Date(2026, 11, 24, 9, 0, 0, 987654321, time.UTC)
+	second.SentAt = &sentAt
+
+	result, err = service.Ingest(context.Background(), &second)
+	require.NoError(t, err)
+	assert.Equal(t, model.ResultUnchanged, result.Status)
+
+	var stored model.Message
+	require.NoError(t, db.First(&stored, "external_id = ?", "post-1001").Error)
+	assert.Equal(t, time.Date(2026, 11, 24, 9, 0, 0, 0, time.UTC), stored.SentAt.UTC())
+}

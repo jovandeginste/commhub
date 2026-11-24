@@ -36,6 +36,7 @@ func newRootCmd() *cobra.Command {
 		newMigrateCmd(&configPath),
 		newIngestCmd(&configPath),
 		newQueryCmd(&configPath),
+		newStatsCmd(&configPath),
 		newGetCmd(&configPath),
 		newVersionCmd(),
 	)
